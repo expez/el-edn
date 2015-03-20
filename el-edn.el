@@ -143,7 +143,7 @@
   (let ((escaping nil)
         (in-string nil)
         (string-content "")
-        (in-comment nil)
+        (in-comment? nil)
         (token "")
         (paren "")
         (escape-char "\\")
@@ -167,10 +167,11 @@
            (cond
             ((string-equal c "") nil)
 	    ;;comments
-	    (in-comment
+            ((string-equal c ";") (setq in-comment? t))
+	    (in-comment?
 	     (if (string-equal c "\n")
 		 (progn
-		   (setq in-comment nil)
+		   (setq in-comment? nil)
 		   (if (> (length token) 0)
 		       (create-token 'Atom line token)))))
             ;;strings
