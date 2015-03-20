@@ -216,33 +216,34 @@
 
 (defun edn--read (edn-string1)
   (let ((tokens (edn--lex edn-string1)))
-    (cl-labels
-        ((read-ahead (token)
-                     (let ((type (gethash 'type token))
-                           (val (gethash 'value token)))
-                       (cond
-                        ((eq type 'Paren)
-                         (let ((L '())
-                               (close-paren (cond ((string-equal val "(") ")")
-                                                  ((string-equal val "[") "]")
-                                                  ((string-equal val "{") "}")))
-                               (next-token nil))
-                           (catch 'break
-                             (while tokens
-                               (setq next-token (pop tokens))
-                               (if (string-equal (gethash 'value next-token) close-paren)
-                                   (throw 'break (edn--handle-collection token L))
-                                 (setq L (append L (list (read-ahead next-token))))))
-                             (error "Unexpected end of list"))))
-                        ((s-contains-p val ")]}")
-                         (progn
-                           (print (list token tokens))
-                           (error "Unexpected closing paren")))
-                        ((and (> (length val) 0)
-                              (string-equal (substring val 0 1) "#"))
-                         (edn--handle-tagged token (read-ahead (pop tokens))))
-                        (t (edn--handle-atom token))))))
-      (read-ahead (pop tokens)))))
+    (when tokens
+      (cl-labels
+          ((read-ahead (token)
+                       (let ((type (gethash 'type token))
+                             (val (gethash 'value token)))
+                         (cond
+                          ((eq type 'Paren)
+                           (let ((L '())
+                                 (close-paren (cond ((string-equal val "(") ")")
+                                                    ((string-equal val "[") "]")
+                                                    ((string-equal val "{") "}")))
+                                 (next-token nil))
+                             (catch 'break
+                               (while tokens
+                                 (setq next-token (pop tokens))
+                                 (if (string-equal (gethash 'value next-token) close-paren)
+                                     (throw 'break (edn--handle-collection token L))
+                                   (setq L (append L (list (read-ahead next-token))))))
+                               (error "Unexpected end of list"))))
+                          ((s-contains-p val ")]}")
+                           (progn
+                             (print (list token tokens))
+                             (error "Unexpected closing paren")))
+                          ((and (> (length val) 0)
+                                (string-equal (substring val 0 1) "#"))
+                           (edn--handle-tagged token (read-ahead (pop tokens))))
+                          (t (edn--handle-atom token))))))
+        (read-ahead (pop tokens))))))
 
 (defun edn--node-is-collection (node)
   (member (gethash 'type node)
@@ -301,15 +302,16 @@
     (funcall handler val)))
 
 (defun edn--reify (node)
-  (let* ((type (gethash 'type node))
-         (value (gethash 'value node)))
-    (when (edn--node-is-collection node)
-      (if (listp value)
-          (setq value (mapcar 'edn--reify value))
-        (setq value (edn--reify value))))
-    (if (eq type 'EdnTagged)
-        (edn--reify-tagged value)
-      (funcall (gethash type edn--reify-handlers) value))))
+  (when node
+    (let* ((type (gethash 'type node))
+           (value (gethash 'value node)))
+      (when (edn--node-is-collection node)
+        (if (listp value)
+            (setq value (mapcar 'edn--reify value))
+          (setq value (edn--reify value))))
+      (if (eq type 'EdnTagged)
+          (edn--reify-tagged value)
+        (funcall (gethash type edn--reify-handlers) value)))))
 
 (defun edn-parse (edn)
   (edn--reify (edn--read edn)))
