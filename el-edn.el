@@ -100,10 +100,12 @@
     node))
 
 (defun edn--handle-atom (token)
-  (let ((val (gethash 'value token)))
+  (let ((val (gethash 'value token))
+        (type (gethash 'type token)))
     (edn--node
      (cond ((edn--valid-nil val) 'EdnNil)
-           ((eq (gethash 'type token) 'String) 'EdnString)
+           ((eq type 'String) 'EdnString)
+           ((eq type 'Elide) 'EdnElide)
            ((edn--valid-char val) 'EdnChar)
            ((edn--valid-bool val) 'EdnBool)
            ((edn--valid-keyword val) 'EdnKeyword)
@@ -126,8 +128,7 @@
 (defun edn--handle-tagged (token value)
   (let ((tag-name (substring (gethash 'value token) 1)))
     (edn--node
-     (cond ((string-equal tag-name "_") 'EdnDiscard)
-           ((string-equal tag-name "") 'EdnSet)
+     (cond ((string-equal tag-name "") 'EdnSet)
            (t 'EdnTagged))
      (gethash 'line token)
      (let ((content (make-hash-table :test 'equal)))
@@ -138,6 +139,9 @@
          (puthash 'value value content))
 
        content))))
+
+(defun edn--whitespace? (c)
+  (s-matches? "[ ,\n]" c))
 
 (defun edn--lex (edn-string)
   (let ((escaping nil)
@@ -152,11 +156,9 @@
         (tokens '()))
     (cl-labels
         ((create-token (type line value)
-                       (progn
-                         (setq tokens
-                               (append tokens (list (edn--token type line value))))
-                         (setq token "")
-                         (setq string-content ""))))
+                       (push (edn--token type line value) tokens)
+                       (setq token ""
+                             string-content "")))
       (mapc
        (lambda (c)
          (progn
@@ -204,46 +206,55 @@
                      (setq escaping nil)
                    (if (string-equal c escape-char)
                        (setq escaping t)))
-                 (if (or (string-equal token "#_")
-                         (and (= (length token) 2)
-                              (string-equal (substring token 0 1) escape-char)))
-                     (create-token 'Atom line token))
-                 (setq token (concat token c)))))))
+                 (if (and (string-equal token "#")
+                          (string-equal c "_"))
+                     (create-token 'Elide line "#_")
+                   (setq token (concat token c))))))))
        (split-string edn-string ""))
       (if (> (length token) 0)
           (create-token 'Atom line token))
-      tokens)))
+      (nreverse tokens))))
 
-(defun edn--read (edn-string1)
-  (let ((tokens (edn--lex edn-string1)))
+(defun edn--read (edn-string)
+  "Reads one form from EDN-STRING"
+  (let ((tokens (edn--lex edn-string)))
     (when tokens
       (cl-labels
-          ((read-ahead (token)
-                       (let ((type (gethash 'type token))
-                             (val (gethash 'value token)))
-                         (cond
-                          ((eq type 'Paren)
-                           (let ((L '())
-                                 (close-paren (cond ((string-equal val "(") ")")
-                                                    ((string-equal val "[") "]")
-                                                    ((string-equal val "{") "}")))
-                                 (next-token nil))
-                             (catch 'break
-                               (while tokens
-                                 (setq next-token (pop tokens))
-                                 (if (string-equal (gethash 'value next-token) close-paren)
-                                     (throw 'break (edn--handle-collection token L))
-                                   (setq L (append L (list (read-ahead next-token))))))
-                               (error "Unexpected end of list"))))
-                          ((s-contains-p val ")]}")
-                           (progn
-                             (print (list token tokens))
-                             (error "Unexpected closing paren")))
-                          ((and (> (length val) 0)
-                                (string-equal (substring val 0 1) "#"))
-                           (edn--handle-tagged token (read-ahead (pop tokens))))
-                          (t (edn--handle-atom token))))))
-        (read-ahead (pop tokens))))))
+          ((read-coll (open)
+                      (let ((close (cond ((string-equal open "(") ")")
+                                         ((string-equal open "[") "]")
+                                         ((string-equal open "{") "}")))
+                            coll)
+                        (catch 'break
+                          (while tokens
+                            (if (string-equal (gethash 'value (car tokens)) close)
+                                (progn (pop tokens)
+                                       (throw 'break
+                                              (edn--handle-collection token
+                                                                      (nreverse coll))))
+                              (let ((form (read-ahead)))
+                                (unless (eq form 'EdnElide)
+                                  (push form coll)))))
+                          (error "Unexpected end of collection"))))
+           (read-ahead ()
+                       (let ((token (pop tokens)))
+                         (let ((type (gethash 'type token))
+                               (val (gethash 'value token))
+                               ignore)
+                           (cond
+                            ((eq type 'Elide) (progn (read-ahead) 'EdnElide))
+                            ((eq type 'Paren) (read-coll val))
+                            ((s-contains-p val ")]}")
+                             (progn
+                               (print (list token tokens))
+                               (error "Unexpected closing paren")))
+                            ((and (> (length val) 0)
+                                  (string-equal (substring val 0 1) "#"))
+                             (edn--handle-tagged token (read-ahead)))
+                            (t (edn--handle-atom token)))))))
+        (let ((form (read-ahead)))
+          (unless (eq form 'EdnElide)
+            form))))))
 
 (defun edn--node-is-collection (node)
   (member (gethash 'type node)
