@@ -8,29 +8,15 @@
 ;; Keywords: EDN, Datomic, Clojure
 ;; Version: 0.0.1
 
-(defun edn--in-chars (tc char-string)
-  (let ((found nil))
-    (mapc (lambda (c)
-	    (if (and (> (length c) 0) (string-equal c tc))
-	        (setq found t)))
-	  (split-string char-string ""))
-    found))
+(require 's)
 
 (defun edn--only-containing-chars (str char-string)
   (let ((found nil))
     (mapc (lambda (c)
-	    (if (and (> (length c) 0) (not (edn--in-chars c char-string)))
+	    (if (and (> (length c) 0) (not (s-contains-p c char-string)))
 	        (setq found t)))
 	  (split-string str ""))
     (not found)))
-
-(defun edn--count-chars (str char)
-  (let ((count 0))
-    (mapc (lambda (c)
-	    (if (string-equal c char)
-	        (setq count (+ count 1))))
-	  (split-string str ""))
-    count))
 
 (defun edn--valid-symbol (str)
   (let ((ucstr (upcase str))
@@ -39,13 +25,13 @@
      ;;can only have valid chars
      (edn--only-containing-chars ucstr "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.*+!-_?$%&=:#/")
      ;;cannot start with a number
-     (not (edn--in-chars fchar "0123456789"))
+     (not (s-contains-p fchar "0123456789"))
      ;;if first char is - + or . next must not be numeric
-     (not (and (edn--in-chars fchar "-+.")
+     (not (and (s-contains-p fchar "-+.")
 	       (> (length ucstr) 1)
-	       (edn--in-chars (substring ucstr 1 2) "0123456789")))
+	       (s-contains-p (substring ucstr 1 2) "0123456789")))
      ;;only allow one slash per symbol
-     (<= (edn--count-chars str "/") 1))))
+     (<= (s-count-matches "/" str) 1))))
 
 (defun edn--valid-keyword (str)
   (and (string-equal (substring str 0 1) ":")
@@ -60,11 +46,11 @@
 
 (defun edn--valid-int (str &optional disallow-sign)
   (progn
-    (if (and (edn--in-chars (substring str 0 1) "-+")
+    (if (and (s-contains-p (substring str 0 1) "-+")
 	     (> (length str) 1)
 	     (not disallow-sign))
 	(setq str (substring str 1)))
-    (if (edn--in-chars (substring str -1) "NM")
+    (if (s-contains-p (substring str -1) "NM")
 	(setq str (substring str 0 -1)))
     (edn--only-containing-chars str "0123456789")))
 
@@ -89,7 +75,7 @@
 		      (not (edn--valid-int (substring back (+ e-pos 1)))))
 		  (setq result nil))
             (progn
-              (if (edn--in-chars (substring back -1) "M")
+              (if (s-contains-p (substring back -1) "M")
                   (setq back (substring back 0 -1)))
               (if (not (edn--valid-int back t))
                   (setq result nil))))))
@@ -202,15 +188,15 @@
                  (if escaping
                      (progn
                        (setq escaping nil)
-                       (if (edn--in-chars c "tnfr")
+                       (if (s-contains-p c "tnfr")
                            (setq string-content (concat string-content escape-char)))))
                  (setq string-content (concat string-content c)))))
             ;;paren or whitespace
-            ((edn--in-chars c "()[]{}\t\n\r ,")
+            ((s-contains-p c "()[]{}\t\n\r ,")
              (progn
                (if (> (length token) 0)
                    (create-token 'Atom line token))
-               (if (edn--in-chars c "()[]{}")
+               (if (s-contains-p c "()[]{}")
                    (create-token 'Paren line c))))
             (t (progn
                  (if escaping
@@ -247,7 +233,7 @@
                                    (throw 'break (edn--handle-collection token L))
                                  (setq L (append L (list (read-ahead next-token))))))
                              (error "Unexpected end of list"))))
-                        ((edn--in-chars val ")]}")
+                        ((s-contains-p val ")]}")
                          (progn
                            (print (list token tokens))
                            (error "Unexpected closing paren")))
